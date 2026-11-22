@@ -1,0 +1,11 @@
+{
+  "column": "north-river",
+  "release_id": "r1",
+  "page_length": 2,
+  "profile": {"revision": "p1", "scale": "3/2", "zero": 1, "limit": "4"},
+  "rows": [
+    {"point_id": "A", "number": 10, "raw": 2, "source_version": "A-1"},
+    {"point_id": "B", "number": 20, "raw": 3, "source_version": "B-1"},
+    {"point_id": "C", "number": 30, "raw": 0, "source_version": "C-1"}
+  ]
+}
