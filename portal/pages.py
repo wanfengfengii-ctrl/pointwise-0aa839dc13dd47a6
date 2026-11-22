@@ -48,3 +48,15 @@ class FixedPortal:
         last = end == len(release.rows)
         next_cursor = None if last else encode_cursor(PageCursor(column, release_id, rows[-1].number))
         return FixedPage(column, release_id, cursor, next_cursor, last, rows)
+
+    def restricted_page(self, column: str, release_id: str, cursor: str | None,
+                        page_length: int, authorized) -> FixedPage:
+        """按授权编号谓词交件的受限采集页。
+
+        游标仍为发布版真实页游标，保证续读与结束证据绑定原发布版；范围外
+        编号在门户侧即被剔除，绝不进入站库。过滤后页内可能为空，只有发布版
+        真正读到末页时才置结束标记，空结束页用于证实合法空区。
+        """
+        page = self.page(column, release_id, cursor, page_length)
+        rows = tuple(row for row in page.rows if authorized(row.number))
+        return FixedPage(column, release_id, page.request_cursor, page.next_cursor, page.last, rows)

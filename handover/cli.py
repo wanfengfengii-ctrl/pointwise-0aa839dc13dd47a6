@@ -25,9 +25,31 @@ def _read_array(path: Path) -> list:
     return data
 
 
+def _parse_zones(text: str | None) -> dict[str, tuple[int, int]] | None:
+    if text is None:
+        return None
+    zones: dict[str, tuple[int, int]] = {}
+    for entry in text.split(','):
+        chunk = entry.strip()
+        if not chunk:
+            raise ValueError('zone entries must be name:first-last and separated by commas')
+        name, _, bounds = chunk.partition(':')
+        first_text, sep, last_text = bounds.partition('-')
+        if not name or not sep:
+            raise ValueError(f'invalid zone entry {chunk!r}; expected name:first-last')
+        try:
+            first, last = int(first_text), int(last_text)
+        except ValueError as exc:
+            raise ValueError(f'zone {name!r} bounds must be integers') from exc
+        zones[name] = (first, last)
+    return zones
+
+
 def _json_value(value):
     if isinstance(value, Fraction):
         return str(value)
+    if isinstance(value, tuple):
+        return list(value)
     if is_dataclass(value):
         return asdict(value)
     raise TypeError(f'{type(value).__name__} cannot be represented as JSON')
@@ -114,6 +136,8 @@ def _parser() -> argparse.ArgumentParser:
     start.add_argument('release')
     start.add_argument('revision')
     start.add_argument('--page-length', type=int, default=2)
+    start.add_argument('--zones',
+                       help='comma-separated authorized zones as name:first-last, e.g. 甲:10-20,乙:25-30')
     pull = commands.add_parser('pull', help='capture the next page')
     pull.add_argument('task')
     evidence = commands.add_parser('evidence', help='export the captured page array')
@@ -145,14 +169,24 @@ def _execute(args: argparse.Namespace, resources: ExitStack):
         return station.profiles.set_profile(args.revision, args.scale, args.zero, args.limit)
     if command == 'start':
         capture = station.capture_from(portal, page_length=args.page_length)
-        return capture.start_fixed(args.task, args.column, args.release, args.revision)
+        return capture.start_fixed(args.task, args.column, args.release, args.revision,
+                                   zones=_parse_zones(args.zones))
     if command == 'pull':
         return station.capture_from(portal).pull(args.task)
     if command == 'evidence':
         return station.evidence_for(args.task)
     if command == 'admit':
+        payload = _read_json(args.file)
+        if isinstance(payload, dict):
+            if set(payload) != {'pages', 'coverage'}:
+                raise ValueError('zoned evidence file requires exactly pages and coverage')
+            pages = tuple(
+                EvidencePage(record['sequence'], decode_fixed_page(json.dumps(record['page'])))
+                for record in payload['pages']
+            )
+            return station.admission.admit(args.task, {'pages': pages, 'coverage': payload['coverage']})
         pages = []
-        for record in _read_array(args.file):
+        for record in payload:
             if not isinstance(record, dict) or record.keys() != {'sequence', 'page'}:
                 raise ValueError('each evidence entry requires sequence and page')
             pages.append(EvidencePage(record['sequence'], decode_fixed_page(json.dumps(record['page']))))

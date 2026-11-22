@@ -31,6 +31,19 @@ python3 -B -m handover.cli demo
 
 `station.admission.admit(task_id, pages)` 返回正式批次和原件。`station.signer.sign(batch_id)` 返回固定班报，`station.reader.lookup(report_id)` 返回班报、批次、各行出处及原页。领取服务只依赖站库。未知号用相应的 `LookupError` 子类报告，冲突及无效业务输入用相应的 `ValueError` 子类报告，数据库错误由 `sqlite3` 报告。用 `station.close()` 关闭站库。
 
+## 多检区交班（同一固定发布版）
+
+白班可在同一固定发布版上按甲、乙、丙等检区交班，检区是包含端点的授权编号范围。多检区是固定版采集的可选扩展：不传 `zones` 的旧调用、旧证据件和旧班报结构全部保持有效。
+
+1. `capture.start_fixed(task_id, column, release_id, revision, zones={区名: (首, 末)})` 登记多检区任务，`zones` 为可选关键字参数。检区可重叠；同任务再次登记同参找回原进度，范围不一致报 `TaskConflict`。
+2. 受限采集仍以发布版真实页游标续读，门户只交付授权范围**并集**内的原读：范围外编号在门户侧即被剔除，不得到站；重叠测点在原页序列中只保留一份，页内可空，发布版真实结束页（可能为空）作为结束证据持久化，读源失败后按原续点续采。
+3. 多检区任务的 `capture.evidence_for(task_id)` 与 `station.evidence_for(task_id)` 返回
+   `{'pages': 原页序列, 'coverage': {区名: {'release_id': 版号, 'range': [首, 末], 'proof': 证据}}}`。
+   `proof` 是绑定发布版、检区范围与受限采集结束页的 SHA-256 证据令牌。单区任务仍返回原页序列。
+4. `station.admission.admit(task_id, package)` 对多检区接收同形字典数据。实收逐区核定完整性：错版报 `WrongFixedRelease`，越权或重复共享测点报 `ZoneViolation`，缺结束证据、缺区键或证据令牌不符报 `MissingZoneProof`，篡改留存原件报 `OriginalPageMismatch`。可删除或替换单区键后用同形数据复投；任何一区未取证都会阻止整单。整个实收在一个事务内提交，失败回滚不留半件，原采集件可重投，同任务同件返回原成果。
+5. 真正没有原读、且由真实空结束页证实为空的检区才签发；班报按检区给出 `total_count`、编号有序的超限明细 `details`（沿用旧明细结构）和精确比例 `over_limit_ratio`（`fractions.Fraction`，空区为 `None`）。共享测点分别计入所属检区，并引用同一原页同一位置。多检区班报顶层 `details` 为空、`over_limit_ratio` 为 `None`，逐区结果在 `report.zones[区名]`。
+6. `station.reader.lookup(report_id)` 对多检区班报额外返回同形 `coverage`，并在 `report.zones` 给出逐区 `{total_count, details, over_limit_ratio}`；旧班报的这两项为 `None`。领取仍只依赖站库，可离线复核报告、原读、出处与覆盖证据。
+
 ## 操作命令
 
-运行 `python3 -B -m handover.cli --help` 查看子命令。全局选项 `--portal` 和 `--station` 放在子命令之前，默认文件分别为 `portal.sqlite` 和 `station.sqlite`。`init` 幂等建库。`publish COLUMN RELEASE FILE` 从 JSON 行数组发布固定版，`page COLUMN RELEASE LENGTH` 读页并可用 `--cursor` 续读。`profile REVISION SCALE ZERO LIMIT` 登记口径，CLI 用分数字符串传入精确比例与阈值。`start TASK COLUMN RELEASE REVISION --page-length 2` 登记，`pull TASK` 推进一步，`evidence TASK` 输出可保存的原页件 JSON，`admit TASK FILE` 提交该 JSON。`sign BATCH` 签报，`lookup REPORT` 可离线领取。JSON 输出中的精确分数用字符串表示，空比例用 `null` 表示。
+运行 `python3 -B -m handover.cli --help` 查看子命令。全局选项 `--portal` 和 `--station` 放在子命令之前，默认文件分别为 `portal.sqlite` 和 `station.sqlite`。`init` 幂等建库。`publish COLUMN RELEASE FILE` 从 JSON 行数组发布固定版，`page COLUMN RELEASE LENGTH` 读页并可用 `--cursor` 续读。`profile REVISION SCALE ZERO LIMIT` 登记口径，CLI 用分数字符串传入精确比例与阈值。`start TASK COLUMN RELEASE REVISION --page-length 2` 登记，多检区任务追加 `--zones 甲:10-20,乙:25-30` 形式的逗号分隔检区（`区名:首-末`，端点包含）。`pull TASK` 推进一步，`evidence TASK` 输出可保存的原页件 JSON（单区为数组，多检区为含 `pages` 与 `coverage` 的对象），`admit TASK FILE` 自动识别两种件形并提交。`sign BATCH` 签报，`lookup REPORT` 可离线领取。JSON 输出中的精确分数用字符串表示，空比例用 `null` 表示。

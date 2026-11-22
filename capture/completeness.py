@@ -34,8 +34,12 @@ def validate_fixed_page(job: FixedJob, evidence: EvidencePage, sequence: int, cu
 
     if not isinstance(page.rows, tuple) or len(page.rows) > job.page_length or type(page.last) is not bool:
         raise InvalidPageChain(f'invalid size or end marker at page {sequence}')
-    if not page.rows and (not page.last or cursor is not None):
+
+    restricted = job.zones is not None
+    if not restricted and not page.rows and (not page.last or cursor is not None):
         raise InvalidPageChain('only the terminal first page may be empty')
+    # 受限采集按授权并集过滤：页内可空，空结束页用于证实已证为空的检区；
+    # 游标与结束标记仍必须绑定原发布版，由下方的游标检查核定。
 
     points: set[str] = set()
     for row in page.rows:
@@ -51,6 +55,13 @@ def validate_fixed_page(job: FixedJob, evidence: EvidencePage, sequence: int, cu
     if page.last:
         if page.next_cursor is not None:
             raise InvalidPageChain('terminal page has a continuation cursor')
+    elif restricted:
+        if page.next_cursor is None:
+            raise InvalidPageChain(f'non-terminal page {sequence} lacks a continuation cursor')
+        try:
+            decode_cursor(page.next_cursor, job.column, job.release_id)
+        except InvalidCursor as exc:
+            raise InvalidPageChain(f'invalid continuation cursor at page {sequence}') from exc
     else:
         expected = encode_cursor(PageCursor(job.column, job.release_id, page.rows[-1].number))
         if len(page.rows) != job.page_length or page.next_cursor != expected:
